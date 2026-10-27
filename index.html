@@ -1827,6 +1827,29 @@ function drawFunnel(c, r, out, vout, t) {
   ctx.fillStyle = '#05070a'; ctx.beginPath(); ctx.ellipse(-1, 0, 4, 10, 0, 0, TAU); ctx.fill();
   ctx.restore();
 }
+function tunnelRide(band, y0, y1, minSp) {
+  return {
+    kind: 'tunnel', zone: Rr(band.x, y0 + 4, band.w, y1 - y0 - 8), dir: null, minSp, dur: 0.7, // works both ways
+    path(k, R) { const d = R.dx < 0 ? -1 : 1, x0 = d > 0 ? band.x : band.x + band.w; return { x: x0 + d * band.w * k, y: R.y0, up: 0, hide: k > 0.1 && k < 0.9 }; },
+    exit(R) { const d = R.dx < 0 ? -1 : 1; return { x: d > 0 ? band.x + band.w + 10 : band.x - 10, y: R.y0, vx: d * Math.max(150, (R.sp || 300) * 0.9), vy: 0 }; },
+    draw() { drawHillTunnel(band, y0, y1); }
+  };
+}
+function drawHillTunnel(B, y0, y1) {
+  const g = ctx.createLinearGradient(B.x - 14, 0, B.x + B.w + 14, 0);
+  g.addColorStop(0, '#2a6a38'); g.addColorStop(0.45, '#5cb768'); g.addColorStop(0.55, '#4fa95c'); g.addColorStop(1, '#1f5a2c');
+  ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(B.x + 6, B.y, B.w + 10, B.h);
+  ctx.fillStyle = g; roundRect(B.x - 14, B.y, B.w + 28, B.h, 30); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1.5; // contour lines along the ridge
+  for (const k of [0.2, 0.4, 0.6, 0.8]) { ctx.beginPath(); ctx.moveTo(B.x - 14 + (B.w + 28) * k, B.y + 6); ctx.lineTo(B.x - 14 + (B.w + 28) * k, B.y + B.h - 6); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(30,70,35,.6)'; for (let i = 0; i < 26; i++) ctx.fillRect(B.x - 6 + (i * 37) % (B.w + 12), B.y + 10 + (i * 71) % (B.h - 20), 3, 5);
+  const mid = (y0 + y1) / 2, hh = (y1 - y0) / 2;
+  for (const x of [B.x - 6, B.x + B.w + 6]) { // the tunnel mouths, framed in stone
+    ctx.fillStyle = '#8a8f94'; ctx.beginPath(); ctx.ellipse(x, mid, 12, hh + 8, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#6b7075'; for (let i = 0; i < 7; i++) { const a = -Math.PI / 2 + i * Math.PI / 6; ctx.fillRect(x + Math.cos(a) * 9 - 3, mid + Math.sin(a) * (hh + 4) - 3, 6, 6); }
+    ctx.fillStyle = '#07090a'; ctx.beginPath(); ctx.ellipse(x, mid, 7, hh, 0, 0, TAU); ctx.fill();
+  }
+}
 const HOLES = [
   { name: 'Lige ud', par: 2, b: Rr(180, 250, 600, 120), tee: [230, 310], cup: [730, 310] },
   { name: 'Knækket', par: 3, b: Rr(160, 120, 640, 380), walls: [Rr(160, 240, 500, 260)], tee: [210, 180], cup: [730, 450] },
@@ -1860,6 +1883,10 @@ const HOLES = [
     bumpers: [[650, 330], [705, 250]], tee: [190, 160], cup: [770, 170] },
   { name: 'Toppen', par: 3, b: Rr(140, 110, 680, 400), domes: [{ x: 560, y: 310, r: 165, f: 900 }], cupPull: 200, cupSp: 240,
     bumpers: [[300, 180], [300, 440]], tee: [200, 310], cup: [560, 310] },
+  { name: 'Tunnelen', par: 4, b: Rr(140, 110, 680, 400),
+    sand: [Rr(255, 225, 130, 170)], slope: [{ ...Rr(255, 225, 130, 170), fx: -170, fy: 0 }], // a sandy slope up to the tunnel
+    walls: [Rr(400, 110, 80, 170), Rr(400, 340, 80, 170)], rides: [tunnelRide(Rr(400, 110, 80, 400), 280, 340, 110)],
+    domes: [{ x: 655, y: 310, r: 150, f: 900 }], cupPull: 200, cupSp: 240, tee: [190, 310], cup: [655, 310] },
   { name: 'Finalen', par: 4, b: Rr(140, 110, 680, 400), walls: [Rr(420, 110, 30, 250)], sand: [Rr(250, 110, 120, 200)], water: [Rr(520, 110, 140, 200)], boost: [{ ...Rr(680, 330, 140, 80), dx: 0, dy: -1 }], mills: [{ x: 750, y: 255, r: 55, n: 3, w: 1.5, hub: true }], tee: [190, 450], cup: [760, 170] }
 ];
 // hills (fx/fy = which way is downhill and how steep) on every hole after "Bakken"
@@ -1954,7 +1981,7 @@ function golfStep(b, hole, h) {
     const sp = Math.hypot(b.vx, b.vy), zx = rd.zone.x + rd.zone.w / 2, zy = rd.zone.y + rd.zone.h / 2;
     if (rd.dir && (!sp || (b.vx * rd.dir[0] + b.vy * rd.dir[1]) / sp < 0.2)) continue;
     if (sp < rd.minSp) { b.vx = -b.vx * 0.55; b.vy = -b.vy * 0.55; b.lip = false; continue; } // not fast enough: it rolls back
-    b.ride = { rd, t: 0, x0: b.x, y0: b.y, sp, a0: Math.atan2(b.y - zy, b.x - zx) };
+    b.ride = { rd, t: 0, x0: b.x, y0: b.y, sp, a0: Math.atan2(b.y - zy, b.x - zx), dx: b.vx < 0 ? -1 : 1 };
     b.vx = b.vy = 0; b.rest = 0;
     return null;
   }
@@ -2026,6 +2053,17 @@ function drawHole(hole, t, tau = t % CLOCK) {
     ctx.fillStyle = '#e3cf98'; ctx.fillRect(s.x, s.y, s.w, s.h);
     ctx.fillStyle = 'rgba(160,130,70,.35)';
     for (let i = 0; i < s.w * s.h / 300; i++) { const px = s.x + ((i * 73) % s.w), py = s.y + ((i * 131) % s.h); ctx.fillRect(px, py, 2, 2); }
+  }
+  for (const z of hole.slope || []) {
+    if (!(hole.sand || []).some(q => q.x < z.x + z.w && q.x + q.w > z.x && q.y < z.y + z.h && q.y + q.h > z.y)) continue;
+    const len = Math.hypot(z.fx, z.fy), ux = z.fx / len, uy = z.fy / len, cx = z.x + z.w / 2, cy = z.y + z.h / 2;
+    const g = ctx.createLinearGradient(cx - ux * z.w / 2, cy - uy * z.h / 2, cx + ux * z.w / 2, cy + uy * z.h / 2);
+    g.addColorStop(0, 'rgba(255,255,255,.18)'); g.addColorStop(1, 'rgba(90,60,20,.25)');
+    ctx.fillStyle = g; ctx.fillRect(z.x, z.y, z.w, z.h);
+    ctx.strokeStyle = 'rgba(110,80,35,.6)'; ctx.lineWidth = 2;
+    for (let x = z.x + 22; x < z.x + z.w; x += 44) for (let y = z.y + 22; y < z.y + z.h; y += 44) {
+      ctx.beginPath(); ctx.moveTo(x - ux * 6 - uy * 6, y - uy * 6 + ux * 6); ctx.lineTo(x + ux * 6, y + uy * 6); ctx.lineTo(x - ux * 6 + uy * 6, y - uy * 6 - ux * 6); ctx.stroke();
+    }
   }
   for (const w of hole.water || []) {
     ctx.fillStyle = '#2c6fa8'; ctx.fillRect(w.x, w.y, w.w, w.h);
