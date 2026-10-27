@@ -1739,6 +1739,16 @@ const HOLES = [
   { name: 'Portalen', par: 3, b: Rr(140, 130, 680, 340), walls: [Rr(460, 130, 40, 340)], portals: [{ a: [400, 190], b: [560, 410] }], bumpers: [[660, 320], [720, 240]], tee: [190, 400], cup: [770, 190] },
   { name: 'Finalen', par: 4, b: Rr(140, 110, 680, 400), walls: [Rr(420, 110, 30, 250)], sand: [Rr(250, 110, 120, 200)], water: [Rr(520, 110, 140, 200)], boost: [{ ...Rr(680, 330, 140, 80), dx: 0, dy: -1 }], mills: [{ x: 750, y: 255, r: 55, n: 3, w: 1.5, hub: true }], tee: [190, 450], cup: [760, 170] }
 ];
+// hills (fx/fy = which way is downhill and how steep) on every hole after "Bakken"
+const HILLS = {
+  'Møllen': [{ ...Rr(250, 240, 120, 160), fx: 0, fy: 90 }, { ...Rr(600, 240, 130, 160), fx: -110, fy: 0 }],
+  'Trappen': [{ ...Rr(400, 240, 180, 160), fx: 0, fy: 110 }, { ...Rr(640, 110, 180, 130), fx: -80, fy: 0 }],
+  'Skyderen': [{ ...Rr(380, 130, 300, 120), fx: 0, fy: 100 }, { ...Rr(380, 350, 300, 120), fx: 0, fy: -100 }],
+  'Øen': [{ ...Rr(280, 110, 170, 400), fx: 75, fy: 0 }],
+  'Portalen': [{ ...Rr(140, 300, 320, 170), fx: 0, fy: -80 }, { ...Rr(600, 130, 220, 340), fx: 0, fy: -90 }],
+  'Finalen': [{ ...Rr(140, 110, 110, 250), fx: 0, fy: 80 }, { ...Rr(300, 380, 320, 130), fx: 90, fy: 0 }]
+};
+for (const h of HOLES) if (HILLS[h.name]) h.slope = (h.slope || []).concat(HILLS[h.name]);
 const PAR_TOTAL = HOLES.reduce((s, h) => s + h.par, 0);
 const inR = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 const inAny = (list, x, y) => (list || []).some(r => inR(r, x, y));
