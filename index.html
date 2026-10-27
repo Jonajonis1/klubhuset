@@ -1858,6 +1858,8 @@ const HOLES = [
     slope: [{ ...Rr(290, 230, 140, 55), fx: 0, fy: 110 }, { ...Rr(290, 315, 140, 55), fx: 0, fy: -110 }, { ...Rr(290, 285, 55, 30), fx: 110, fy: 0 }, { ...Rr(375, 285, 55, 30), fx: -110, fy: 0 }],
     rides: [funnelRide([360, 300], 46, [540, 440], [280, -210])],
     bumpers: [[650, 330], [705, 250]], tee: [190, 160], cup: [770, 170] },
+  { name: 'Toppen', par: 3, b: Rr(140, 110, 680, 400), domes: [{ x: 560, y: 310, r: 165, f: 900 }], cupPull: 200, cupSp: 240,
+    bumpers: [[300, 180], [300, 440]], tee: [200, 310], cup: [560, 310] },
   { name: 'Finalen', par: 4, b: Rr(140, 110, 680, 400), walls: [Rr(420, 110, 30, 250)], sand: [Rr(250, 110, 120, 200)], water: [Rr(520, 110, 140, 200)], boost: [{ ...Rr(680, 330, 140, 80), dx: 0, dy: -1 }], mills: [{ x: 750, y: 255, r: 55, n: 3, w: 1.5, hub: true }], tee: [190, 450], cup: [760, 170] }
 ];
 // hills (fx/fy = which way is downhill and how steep) on every hole after "Bakken"
@@ -1888,9 +1890,13 @@ function golfStep(b, hole, h) {
   const sandy = inAny(hole.sand, b.x, b.y);
   for (const z of hole.boost || []) if (inR(z, b.x, b.y)) { b.vx += z.dx * 700 * h; b.vy += z.dy * 700 * h; }
   for (const z of hole.slope || []) if (inR(z, b.x, b.y)) { b.vx += z.fx * h; b.vy += z.fy * h; }
+  for (const dm of hole.domes || []) { // a round hill: everything runs down away from the top, steeper further out
+    const dx = b.x - dm.x, dy = b.y - dm.y, d = Math.sqrt(dx * dx + dy * dy);
+    if (d < dm.r && d > 0.5) { const f = dm.f * (0.35 + 0.65 * d / dm.r) * h; b.vx += dx / d * f; b.vy += dy / d * f; }
+  }
   // the cup's edge slopes in: slow balls nearby get pulled toward it
   const cdx = hole.cup[0] - b.x, cdy = hole.cup[1] - b.y, cd = Math.sqrt(cdx * cdx + cdy * cdy), sp0 = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-  if (cd < CUP_R + 12 && cd > 0.5 && sp0 < 450) { const pull = 700 * (1 - cd / (CUP_R + 12)) * h; b.vx += cdx / cd * pull; b.vy += cdy / cd * pull; }
+  if (cd < CUP_R + 12 && cd > 0.5 && sp0 < 450) { const pull = (hole.cupPull ?? 700) * (1 - cd / (CUP_R + 12)) * h; b.vx += cdx / cd * pull; b.vy += cdy / cd * pull; }
   b.x += b.vx * h; b.y += b.vy * h;
   const sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
   if (sp > 0) { const ns = Math.max(0, sp - (sandy ? 280 + sp * 2.6 : 55 + sp * 0.85) * h); b.vx *= ns / sp; b.vy *= ns / sp; }
@@ -1955,7 +1961,7 @@ function golfStep(b, hole, h) {
   if (inAny(hole.water, b.x, b.y)) return 'water';
   const ex = b.x - hole.cup[0], ey = b.y - hole.cup[1], e2 = ex * ex + ey * ey;
   if (e2 < CUP_R * CUP_R) {
-    if (sp < 330) return 'cup';
+    if (sp < (hole.cupSp || 330)) return 'cup'; // a cup on a hilltop does not forgive much speed
     if (!b.lip) { // too fast: it rattles the rim and spins out
       b.lip = true;
       const s = (b.vx * ey - b.vy * ex) > 0 ? 0.5 : -0.5, c = Math.cos(s), sn = Math.sin(s), vx = b.vx;
@@ -2001,6 +2007,18 @@ function drawHole(hole, t, tau = t % CLOCK) {
     ctx.fillStyle = g; ctx.fillRect(z.x, z.y, z.w, z.h);
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 2;
     for (let x = z.x + 22; x < z.x + z.w; x += 44) for (let y = z.y + 22; y < z.y + z.h; y += 44) {
+      ctx.beginPath(); ctx.moveTo(x - ux * 6 - uy * 6, y - uy * 6 + ux * 6); ctx.lineTo(x + ux * 6, y + uy * 6); ctx.lineTo(x - ux * 6 + uy * 6, y - uy * 6 - ux * 6); ctx.stroke();
+    }
+  }
+  for (const dm of hole.domes || []) { // light on top, darker down the sides, arrows pointing downhill
+    const g = ctx.createRadialGradient(dm.x - dm.r * 0.15, dm.y - dm.r * 0.2, 4, dm.x, dm.y, dm.r);
+    g.addColorStop(0, 'rgba(255,255,255,.28)'); g.addColorStop(0.6, 'rgba(255,255,255,.06)'); g.addColorStop(1, 'rgba(0,0,0,.25)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(dm.x, dm.y, dm.r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1.5;
+    for (const k of [0.35, 0.6, 0.85]) { ctx.beginPath(); ctx.arc(dm.x, dm.y, dm.r * k, 0, TAU); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2;
+    for (let i = 0; i < 10; i++) for (const k of [0.48, 0.74]) {
+      const a = i * TAU / 10 + k, ux = Math.cos(a), uy = Math.sin(a), x = dm.x + ux * dm.r * k, y = dm.y + uy * dm.r * k;
       ctx.beginPath(); ctx.moveTo(x - ux * 6 - uy * 6, y - uy * 6 + ux * 6); ctx.lineTo(x + ux * 6, y + uy * 6); ctx.lineTo(x - ux * 6 + uy * 6, y - uy * 6 - ux * 6); ctx.stroke();
     }
   }
