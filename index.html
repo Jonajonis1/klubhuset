@@ -1257,7 +1257,7 @@ function drawWorld(t) {
   ctx.fillStyle = '#d23a2a'; ctx.beginPath(); ctx.moveTo(hx, MAT.y + 14); ctx.lineTo(hx + 17, MAT.y + 20); ctx.lineTo(hx, MAT.y + 26); ctx.fill();
   ctx.fillStyle = '#f5f2e8'; ctx.beginPath(); ctx.arc(MAT.x + (MAT.n === 1 ? 30 : MAT.w - 30), MAT.y + 84, 4, 0, TAU); ctx.fill();
   ctx.font = `600 11px ${FONT}`; ctx.fillStyle = 'rgba(238,241,232,.75)'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`MINIGOLF ${MAT.n} · 12 BANER`, MAT.x + MAT.w / 2, MAT.y + MAT.h - 14);
+  ctx.fillText(`MINIGOLF ${MAT.n} · ${HOLES.length} BANER`, MAT.x + MAT.w / 2, MAT.y + MAT.h - 14);
   }
 
   // outside: parked cars, the lasertag hall, trees, street lamps and the bouncer
@@ -1725,6 +1725,108 @@ const GR = 7, CUP_R = 10, BUMP_R = 14, GOLF_MAX = 7, CLOCK = 600;
 const Rr = (x, y, w, h) => ({ x, y, w, h });
 // slope: fx/fy = downhill pull · movers: walls sliding along dx/dy · mills: spinning blades · portals: one-way tunnel a → b
 // moving parts run on a clock (tau) that the shot carries along, so every player sees the same shot
+// ---------- rides: the ball goes into something and comes out somewhere else ----------
+// zone: where it gets in · dir: the way it must be rolling (null = any) · minSp: too slow and it rolls back
+// path(k, R): where the ball is at k = 0..1 of the ride (up = how high above the ground it is drawn, s = size, hide = out of sight)
+// exit(R): where it comes out and how fast. Everything is plain arithmetic, so every player sees the same ride.
+const bez = (p0, p1, p2, s) => { const u = 1 - s; return [u * u * p0[0] + 2 * u * s * p1[0] + s * s * p2[0], u * u * p0[1] + 2 * u * s * p1[1] + s * s * p2[1]]; };
+function millRide(house, P0, P1, P2, speed) {
+  return {
+    kind: 'mill', zone: Rr(house.x + 16, house.y + 22, house.w - 22, house.h - 44), dir: null, minSp: 0, dur: 2.4,
+    path(k) {
+      if (k < 0.35) return { x: house.x + house.w / 2, y: house.y + house.h / 2, up: 0, hide: true }; // the mill lifts it up inside
+      const s = (k - 0.35) / 0.65, [x, y] = bez(P0, P1, P2, s);
+      return { x, y, up: (1 - s) * 46, s: 1 + (1 - s) * 0.35 };
+    },
+    exit() { const dx = P2[0] - P1[0], dy = P2[1] - P1[1], l = Math.hypot(dx, dy); return { x: P2[0] + dx / l * 10, y: P2[1] + dy / l * 10, vx: dx / l * speed, vy: dy / l * speed }; },
+    draw(t) { drawMillHouse(house, t); drawSlide(P0, P1, P2); }
+  };
+}
+function loopRide(x0, y0, L, R, minSp) {
+  return {
+    kind: 'loop', zone: Rr(x0, y0 - 14, 24, 28), dir: [1, 0], minSp, dur: 1.25,
+    path(k) { const a = TAU * k; return { x: x0 + 12 + L * k + R * Math.sin(a), y: y0, up: (1 - Math.cos(a)) * R * 0.95 }; },
+    exit(Rd) { return { x: x0 + 26 + L, y: y0, vx: Math.max(240, Rd.sp * 0.85), vy: 0 }; },
+    draw() { drawLoopTrack(this); }
+  };
+}
+function rampRide(zone, landX, minSp) {
+  return {
+    kind: 'ramp', zone, dir: [1, 0], minSp, dur: 0.9,
+    path(k, Rd) { const h = Math.sin(Math.PI * k); return { x: Rd.x0 + (landX - Rd.x0) * k, y: Rd.y0, up: h * 85, s: 1 + h * 0.5 }; },
+    exit(Rd) { return { x: landX, y: Rd.y0, vx: Math.max(200, Rd.sp * 0.7), vy: 0 }; },
+    draw() { drawRamp(zone); }
+  };
+}
+function funnelRide(c, r, out, vout) {
+  return {
+    kind: 'funnel', zone: Rr(c[0] - 14, c[1] - 14, 28, 28), dir: null, minSp: 0, dur: 1.7,
+    path(k, Rd) { const a = Rd.a0 + k * 4 * Math.PI, rr = r * (1 - k); return { x: c[0] + Math.cos(a) * rr, y: c[1] + Math.sin(a) * rr, up: 0, s: 1 - 0.6 * k, hide: k > 0.9 }; },
+    exit() { return { x: out[0], y: out[1], vx: vout[0], vy: vout[1] }; },
+    draw(t) { drawFunnel(c, r, out, vout, t); }
+  };
+}
+function rideStep(b, h) {
+  const R = b.ride;
+  R.t += h;
+  const k = Math.min(1, R.t / R.rd.dur), p = R.rd.path(k, R);
+  b.x = p.x; b.y = p.y; b.up = p.up || 0; b.sc = p.s || 1; b.hide = !!p.hide;
+  if (k >= 1) {
+    const e = R.rd.exit(R);
+    Object.assign(b, { x: e.x, y: e.y, vx: e.vx, vy: e.vy, ride: null, up: 0, sc: 1, hide: false, rest: 0, tp: 0.3 });
+  }
+  return null;
+}
+function drawMillHouse(H, t) {
+  const cx = H.x + H.w / 2, cy = H.y + H.h / 2;
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; roundRect(H.x + 5, H.y + 7, H.w, H.h, 14); ctx.fill();
+  ctx.fillStyle = '#efe4cb'; roundRect(H.x, H.y, H.w, H.h, 14); ctx.fill(); // whitewashed walls
+  ctx.strokeStyle = 'rgba(120,90,60,.25)'; ctx.lineWidth = 1;
+  for (let y = H.y + 10; y < H.y + H.h; y += 10) { ctx.beginPath(); ctx.moveTo(H.x + 4, y); ctx.lineTo(H.x + H.w - 4, y); ctx.stroke(); }
+  const rr = Math.min(H.w, H.h) * 0.42; // a thatched cap on top, seen from above
+  ctx.fillStyle = '#6b4a2e'; ctx.beginPath(); ctx.arc(cx + 4, cy, rr, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#4a321e'; ctx.lineWidth = 2;
+  for (let i = 0; i < 10; i++) { const a = i * TAU / 10; ctx.beginPath(); ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 4 + Math.cos(a) * rr, cy + Math.sin(a) * rr); ctx.stroke(); }
+  ctx.fillStyle = '#2a1c12'; roundRect(H.x - 3, cy - 20, 18, 40, 4); ctx.fill(); // the door
+}
+function drawSlide(P0, P1, P2) {
+  const pts = [];
+  for (let i = 0; i <= 30; i++) { const s = i / 30, [x, y] = bez(P0, P1, P2, s); pts.push([x, y, (1 - s) * 46]); }
+  ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 3;
+  for (let i = 4; i < 28; i += 6) { const [x, y, u] = pts[i]; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - u); ctx.stroke(); } // posts
+  const line = (w, c) => { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); pts.forEach(([x, y, u], i) => i ? ctx.lineTo(x, y - u) : ctx.moveTo(x, y - u)); ctx.stroke(); ctx.lineCap = 'butt'; };
+  line(22, '#5e3f26'); line(15, '#d9a066'); line(2, '#f5d29a');
+}
+function drawLoopTrack(rd) {
+  const pts = [];
+  for (let i = 0; i <= 60; i++) { const p = rd.path(i / 60, {}); pts.push([p.x, p.y - p.up]); }
+  const line = (w, c) => { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); ctx.lineCap = 'butt'; };
+  ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(rd.zone.x, rd.zone.y + 30, 2, 2);
+  line(16, 'rgba(0,0,0,.35)'); line(13, '#4a5a6e'); line(8, '#b8c6d4');
+  ctx.font = `700 12px ${FONT}`; ctx.fillStyle = '#e0aa45'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('FART PÅ!', rd.zone.x + 70, rd.zone.y + 60);
+}
+function drawRamp(z) {
+  const g = ctx.createLinearGradient(z.x - 40, 0, z.x + z.w, 0);
+  g.addColorStop(0, '#6b4a2e'); g.addColorStop(1, '#c99a62');
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(z.x - 36, z.y + 6, z.w + 40, z.h);
+  ctx.fillStyle = g; ctx.fillRect(z.x - 40, z.y, z.w + 40, z.h);
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
+  for (let x = z.x - 30; x < z.x + z.w; x += 12) { ctx.beginPath(); ctx.moveTo(x, z.y); ctx.lineTo(x, z.y + z.h); ctx.stroke(); }
+  ctx.fillStyle = '#e0aa45'; ctx.fillRect(z.x + z.w - 4, z.y, 4, z.h);
+}
+function drawFunnel(c, r, out, vout, t) {
+  const g = ctx.createRadialGradient(c[0], c[1], 2, c[0], c[1], r + 12);
+  g.addColorStop(0, '#05070a'); g.addColorStop(0.5, '#2b3a4a'); g.addColorStop(1, '#7d93a8');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c[0], c[1], r + 12, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(220,235,255,.35)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) { ctx.beginPath(); for (let k = 0; k <= 40; k++) { const a = t * 2 + i * TAU / 3 + k * 0.25, rr = (r + 8) * (1 - k / 44); const x = c[0] + Math.cos(a) * rr, y = c[1] + Math.sin(a) * rr; k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+  const a = Math.atan2(vout[1], vout[0]); // the pipe it comes out of
+  ctx.save(); ctx.translate(out[0], out[1]); ctx.rotate(a);
+  ctx.fillStyle = '#5b6470'; ctx.fillRect(-34, -13, 30, 26); ctx.fillStyle = '#9aa6b2'; ctx.fillRect(-8, -15, 8, 30);
+  ctx.fillStyle = '#05070a'; ctx.beginPath(); ctx.ellipse(-1, 0, 4, 10, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+}
 const HOLES = [
   { name: 'Lige ud', par: 2, b: Rr(180, 250, 600, 120), tee: [230, 310], cup: [730, 310] },
   { name: 'Knækket', par: 3, b: Rr(160, 120, 640, 380), walls: [Rr(160, 240, 500, 260)], tee: [210, 180], cup: [730, 450] },
@@ -1737,6 +1839,25 @@ const HOLES = [
   { name: 'Skyderen', par: 3, b: Rr(140, 130, 680, 340), movers: [{ ...Rr(340, 265, 30, 70), dx: 0, dy: 1, amp: 115, sp: 1.6 }, { ...Rr(560, 265, 30, 70), dx: 0, dy: 1, amp: 115, sp: -2.1 }], bumpers: [[460, 180], [460, 420]], tee: [190, 300], cup: [770, 300] },
   { name: 'Øen', par: 3, b: Rr(140, 110, 680, 400), water: [Rr(460, 110, 140, 170), Rr(460, 330, 140, 180), Rr(600, 110, 220, 120), Rr(600, 390, 220, 120), Rr(760, 230, 60, 160)], tee: [200, 305], cup: [690, 310] },
   { name: 'Portalen', par: 3, b: Rr(140, 130, 680, 340), walls: [Rr(460, 130, 40, 340)], portals: [{ a: [400, 190], b: [560, 410] }], bumpers: [[660, 320], [720, 240]], tee: [190, 400], cup: [770, 190] },
+  { name: 'Vindmøllen', par: 3, b: Rr(140, 110, 680, 400),
+    walls: [Rr(500, 110, 30, 400), Rr(400, 240, 100, 14), Rr(400, 346, 100, 14), Rr(400, 254, 14, 26), Rr(400, 320, 14, 26)],
+    mills: [{ x: 394, y: 226, r: 80, n: 3, w: 0.8, hub: false, bare: true }], // sails on the mill's front, sweeping past the door
+    rides: [millRide(Rr(400, 240, 100, 120), [480, 285], [565, 165], [650, 245], 330)],
+    slope: [{ ...Rr(220, 110, 150, 130), fx: 0, fy: 90 }],
+    bumpers: [[700, 330]], tee: [200, 300], cup: [735, 430] },
+  { name: 'Loopet', par: 2, b: Rr(140, 210, 680, 180),
+    walls: [Rr(380, 210, 180, 76), Rr(380, 314, 180, 76)],
+    rides: [loopRide(384, 300, 150, 55, 300)],
+    slope: [{ ...Rr(600, 210, 220, 180), fx: -90, fy: 0 }], bumpers: [[705, 345]], tee: [200, 300], cup: [770, 250] },
+  { name: 'Hoppet', par: 3, b: Rr(140, 150, 680, 300),
+    water: [Rr(420, 150, 200, 300)], walls: [Rr(624, 150, 12, 300)], // a little fence on the far shore
+    rides: [rampRide(Rr(372, 255, 48, 90), 670, 330)],
+    slope: [{ ...Rr(640, 250, 180, 200), fx: 0, fy: -70 }], bumpers: [[745, 380]], tee: [200, 300], cup: [770, 195] },
+  { name: 'Spiralen', par: 3, b: Rr(140, 110, 680, 400),
+    walls: [Rr(470, 110, 30, 400)],
+    slope: [{ ...Rr(290, 230, 140, 55), fx: 0, fy: 110 }, { ...Rr(290, 315, 140, 55), fx: 0, fy: -110 }, { ...Rr(290, 285, 55, 30), fx: 110, fy: 0 }, { ...Rr(375, 285, 55, 30), fx: -110, fy: 0 }],
+    rides: [funnelRide([360, 300], 46, [540, 440], [280, -210])],
+    bumpers: [[650, 330], [705, 250]], tee: [190, 160], cup: [770, 170] },
   { name: 'Finalen', par: 4, b: Rr(140, 110, 680, 400), walls: [Rr(420, 110, 30, 250)], sand: [Rr(250, 110, 120, 200)], water: [Rr(520, 110, 140, 200)], boost: [{ ...Rr(680, 330, 140, 80), dx: 0, dy: -1 }], mills: [{ x: 750, y: 255, r: 55, n: 3, w: 1.5, hub: true }], tee: [190, 450], cup: [760, 170] }
 ];
 // hills (fx/fy = which way is downhill and how steep) on every hole after "Bakken"
@@ -1763,6 +1884,7 @@ const bladeAngle = (ml, k, tau) => ml.w * tau + k * TAU / ml.n;
 
 function golfStep(b, hole, h) {
   const tau = b.t0 + b.t; b.t += h;
+  if (b.ride) return rideStep(b, h);
   const sandy = inAny(hole.sand, b.x, b.y);
   for (const z of hole.boost || []) if (inR(z, b.x, b.y)) { b.vx += z.dx * 700 * h; b.vy += z.dy * 700 * h; }
   for (const z of hole.slope || []) if (inR(z, b.x, b.y)) { b.vx += z.fx * h; b.vy += z.fy * h; }
@@ -1821,6 +1943,15 @@ function golfStep(b, hole, h) {
     const dx = b.x - p.a[0], dy = b.y - p.a[1];
     if (dx * dx + dy * dy < 144) { b.x = p.b[0]; b.y = p.b[1]; b.tp = 0.4; break; }
   }
+  for (const rd of hole.rides || []) {
+    if (b.tp > 0 || !inR(rd.zone, b.x, b.y)) continue;
+    const sp = Math.hypot(b.vx, b.vy), zx = rd.zone.x + rd.zone.w / 2, zy = rd.zone.y + rd.zone.h / 2;
+    if (rd.dir && (!sp || (b.vx * rd.dir[0] + b.vy * rd.dir[1]) / sp < 0.2)) continue;
+    if (sp < rd.minSp) { b.vx = -b.vx * 0.55; b.vy = -b.vy * 0.55; b.lip = false; continue; } // not fast enough: it rolls back
+    b.ride = { rd, t: 0, x0: b.x, y0: b.y, sp, a0: Math.atan2(b.y - zy, b.x - zx) };
+    b.vx = b.vy = 0; b.rest = 0;
+    return null;
+  }
   if (inAny(hole.water, b.x, b.y)) return 'water';
   const ex = b.x - hole.cup[0], ey = b.y - hole.cup[1], e2 = ex * ex + ey * ey;
   if (e2 < CUP_R * CUP_R) {
@@ -1836,10 +1967,10 @@ function golfStep(b, hole, h) {
   if (s2 < 6) { b.rest += h; if (b.rest > 0.35) { b.vx = b.vy = 0; b.stopped = true; } } else b.rest = 0;
   return null;
 }
-const ballStopped = b => b.stopped || (b.vx === 0 && b.vy === 0);
+const ballStopped = b => !b.ride && (b.stopped || (b.vx === 0 && b.vy === 0));
 function hitBall(b, a, p, t0 = 0) {
   const sp = 60 + p * 940;
-  Object.assign(b, { vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t0, t: 0, rest: 0, stopped: false, lip: false, tp: 0 });
+  Object.assign(b, { vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t0, t: 0, rest: 0, stopped: false, lip: false, tp: 0, ride: null, up: 0, sc: 1, hide: false });
 }
 function simGolf(x, y, a, p, hole, t0) {
   const b = { x, y }; hitBall(b, a, p, t0);
@@ -1916,13 +2047,14 @@ function drawHole(hole, t, tau = t % CLOCK) {
     ctx.fillStyle = '#c8323a'; ctx.beginPath(); ctx.arc(x, y, BUMP_R, 0, TAU); ctx.fill();
     ctx.strokeStyle = '#f5f2e8'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, BUMP_R - 4, 0, TAU); ctx.stroke();
   }
+  for (const rd of hole.rides || []) rd.draw(t, tau);
   const [cx, cy] = hole.cup;
   ctx.fillStyle = '#2a7a3a'; ctx.beginPath(); ctx.arc(cx, cy, CUP_R + 3, 0, TAU); ctx.fill();
   ctx.fillStyle = '#0a0a0a'; ctx.beginPath(); ctx.arc(cx, cy, CUP_R, 0, TAU); ctx.fill();
   ctx.strokeStyle = '#eee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx + 3, cy); ctx.lineTo(cx + 3, cy - 36); ctx.stroke();
   ctx.fillStyle = '#d23a2a'; ctx.beginPath(); ctx.moveTo(cx + 3, cy - 36); ctx.lineTo(cx + 24, cy - 29 + Math.sin(t * 3) * 2); ctx.lineTo(cx + 3, cy - 22); ctx.fill();
   for (const ml of hole.mills || []) {
-    if (!ml.hub) { // the mill house sits on the frame; only the sails reach the course
+    if (!ml.hub && !ml.bare) { // the mill house sits on the frame; only the sails reach the course
       ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(ml.x - 24, ml.y - 20, 52, 52);
       ctx.fillStyle = '#8e2f3a'; ctx.fillRect(ml.x - 26, ml.y - 24, 52, 52);
       ctx.fillStyle = '#5e1f27'; ctx.beginPath(); ctx.moveTo(ml.x - 32, ml.y - 22); ctx.lineTo(ml.x, ml.y - 44); ctx.lineTo(ml.x + 32, ml.y - 22); ctx.fill();
@@ -1964,12 +2096,15 @@ function drawGolfPreview(hole, x, y, a, power, tau) {
 }
 function drawHoleTitle(hole, i) {
   ctx.font = `600 14px ${FONT}`; ctx.fillStyle = 'rgba(238,241,232,.75)'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`Bane ${i + 1}/12 · ${hole.name} · Par ${hole.par}`, 480, 88);
+  ctx.fillText(`Bane ${i + 1}/${HOLES.length} · ${hole.name} · Par ${hole.par}`, 480, 88);
 }
-function drawGolfBall(x, y, color) {
-  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(x + 2, y + 3, GR, 0, TAU); ctx.fill();
-  ctx.fillStyle = '#f7f5ee'; ctx.beginPath(); ctx.arc(x, y, GR, 0, TAU); ctx.fill();
-  if (color) { ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, GR - 1, 0, TAU); ctx.stroke(); }
+function drawGolfBall(x, y, color, rb) {
+  const ride = rb && rb.ride;
+  if (ride && rb.hide) return; // inside the windmill or down the funnel
+  const up = ride ? rb.up || 0 : 0, R = GR * (ride ? rb.sc || 1 : 1);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(x + 2, y + 3, R * Math.max(0.4, 1 - up / 140), 0, TAU); ctx.fill();
+  ctx.fillStyle = '#f7f5ee'; ctx.beginPath(); ctx.arc(x, y - up, R, 0, TAU); ctx.fill();
+  if (color) { ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y - up, R - 1, 0, TAU); ctx.stroke(); }
 }
 function drawGolfFx(fx) {
   const k = 1 - fx.t / 0.7;
@@ -1989,14 +2124,15 @@ function drawPutter(b, a, pull) {
 }
 function drawGolfCard(card, cur) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  for (let i = 0; i < 12; i++) {
-    const x = 150 + i * 52;
-    ctx.font = `600 11px ${FONT}`; ctx.fillStyle = i === cur ? '#e0aa45' : 'rgba(238,241,232,.5)'; ctx.fillText(`${i + 1} · P${HOLES[i].par}`, x, 568);
+  const n = HOLES.length, step = 680 / n;
+  for (let i = 0; i < n; i++) {
+    const x = 120 + step / 2 + i * step;
+    ctx.font = `600 ${n > 12 ? 10 : 11}px ${FONT}`; ctx.fillStyle = i === cur ? '#e0aa45' : 'rgba(238,241,232,.5)'; ctx.fillText(n > 12 ? `${i + 1}·P${HOLES[i].par}` : `${i + 1} · P${HOLES[i].par}`, x, 568);
     ctx.font = `700 15px ${FONT}`; ctx.fillStyle = '#eef1e8'; ctx.fillText(card[i] != null ? String(card[i]) : '·', x, 588);
   }
   const tot = card.reduce((s, v) => s + (v || 0), 0);
-  ctx.font = `600 11px ${FONT}`; ctx.fillStyle = 'rgba(238,241,232,.5)'; ctx.fillText('I ALT', 810, 568);
-  ctx.font = `700 15px ${FONT}`; ctx.fillStyle = '#e0aa45'; ctx.fillText(String(tot), 810, 588);
+  ctx.font = `600 11px ${FONT}`; ctx.fillStyle = 'rgba(238,241,232,.5)'; ctx.fillText('I ALT', 845, 568);
+  ctx.font = `700 15px ${FONT}`; ctx.fillStyle = '#e0aa45'; ctx.fillText(String(tot), 845, 588);
 }
 
 // ---------- solo minigolf: 12 holes, fewest strokes ----------
@@ -2039,19 +2175,19 @@ const golf = {
       if (!this.moving && this.nextT <= 0 && this.strokes >= GOLF_MAX) this.holeDone(GOLF_MAX, `Maks ${GOLF_MAX} slag`);
     }
     const tot = this.card.reduce((s, v) => s + v, 0), parSoFar = HOLES.slice(0, this.card.length).reduce((s, x) => s + x.par, 0);
-    statusEl.textContent = `Træning · Bane ${Math.min(this.h + 1, 12)}/12 · Slag: ${this.strokes} · I alt: ${tot} (${fmtPar(tot - parSoFar)})`;
+    statusEl.textContent = `Træning · Bane ${Math.min(this.h + 1, HOLES.length)}/${HOLES.length} · Slag: ${this.strokes} · I alt: ${tot} (${fmtPar(tot - parSoFar)})`;
   },
   finish() {
     this.done = true;
     const tot = this.card.reduce((s, v) => s + v, 0), best = store.get('golfBest'), record = !best || tot < best;
     if (record) store.set('golfBest', tot);
-    showPanel(record ? 'Ny rekord!' : 'Runden er slut!', `${tot} slag på 12 baner (${fmtPar(tot - PAR_TOTAL)}).` + (best && !record ? ` Rekorden er ${best}.` : ''));
+    showPanel(record ? 'Ny rekord!' : 'Runden er slut!', `${tot} slag på ${HOLES.length} baner (${fmtPar(tot - PAR_TOTAL)}).` + (best && !record ? ` Rekorden er ${best}.` : ''));
   },
   draw() {
     const i = Math.min(this.h, HOLES.length - 1), ho = HOLES[i], b = this.ball;
     const tau = this.moving ? b.t0 + b.t : T % CLOCK;
     drawHole(ho, T, tau); drawHoleTitle(ho, i);
-    if (this.nextT <= 0 && !this.done) drawGolfBall(b.x, b.y, null);
+    if (this.nextT <= 0 && !this.done) drawGolfBall(b.x, b.y, null, b);
     if (this.fx) drawGolfFx(this.fx);
     if (this.ready()) {
       const a = aimFrom(b.x, b.y);
@@ -2944,7 +3080,7 @@ function golfShot(m, a, p, ph) {
     m.st = 'over';
     const tt = golfTeamTotals(m), lo = Math.min(...tt), w = tt.map((v, i) => v === lo ? i : -1).filter(i => i >= 0);
     m.win = w.length === 1 ? w[0] : -2;
-    msg = { s: -1, t: 'Alle 12 baner er spillet.' };
+    msg = { s: -1, t: `Alle ${HOLES.length} baner er spillet.` };
   } else {
     G.h++;
     const t = HOLES[G.h].tee;
@@ -3098,6 +3234,7 @@ function golfField(hole) {
     const k = q[h], i = k % nx, nb = [];
     if (i > 0) nb.push(k - 1); if (i < nx - 1) nb.push(k + 1); if (k >= nx) nb.push(k - nx); if (k < nx * (ny - 1)) nb.push(k + nx);
     for (const pt of hole.portals || []) if (idx(pt.b[0], pt.b[1]) === k) nb.push(idx(pt.a[0], pt.a[1])); // in at a, out at b
+    for (const rd of hole.rides || []) { const zx = rd.zone.x + rd.zone.w / 2, zy = rd.zone.y + rd.zone.h / 2, e = rd.exit({ sp: 320, x0: zx, y0: zy, a0: 0 }); if (idx(e.x, e.y) === k) nb.push(idx(zx, zy)); }
     for (const n of nb) if (n >= 0 && d[n] === Infinity && free(n)) { d[n] = d[k] + C; q.push(n); }
   }
   hole.df = (x, y) => { const k = idx(x, y), v = k >= 0 ? d[k] : Infinity; return isFinite(v) ? v : 500 + 3 * Math.hypot(x - hole.cup[0], y - hole.cup[1]); };
@@ -3390,7 +3527,7 @@ function drawMatch() {
       const p = hi === G.h ? G.pos[i] : 0;
       if (Array.isArray(p)) drawGolfBall(num(p[0]), num(p[1]), peerColor(peer));
     });
-    if (A) { if (A.fx) drawGolfFx(A.fx); else drawGolfBall(A.b.x, A.b.y, peerColor(m.seats[A.s])); }
+    if (A) { if (A.fx) drawGolfFx(A.fx); else drawGolfBall(A.b.x, A.b.y, peerColor(m.seats[A.s]), A.b); }
     const me = m.seats.indexOf(myPeer()), myPos = me >= 0 ? G.pos[me] : 0;
     if (mine && Array.isArray(myPos)) {
       const x = num(myPos[0]), y = num(myPos[1]), a = aimFrom(x, y);
@@ -3931,7 +4068,7 @@ function renderMenu() {
     : ({
       pool: '1 mod 1 og 2 mod 2 spilles som 8-ball. Alle mod alle spilles om point: 1 point pr. kugle, 3 for 8\'eren, −1 for hvid i hul.',
       darts: 'Alle starter på 301 og skal ramme præcis 0. Kaster du over, er det bust, og turen tæller ikke. På 2 mod 2 deler holdet én score.',
-      golf: '12 baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane, vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.',
+      golf: `${HOLES.length} baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane, vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.`,
       laser: 'Alle mod alle eller 2 mod 2 i 2 minutter. Bliver du ramt, er du ude i et par sekunder. Flest tags vinder, og på 2 mod 2 tæller holdets tags sammen.',
       box: 'Kun 1 mod 1. Først til K.O. vinder. Står I begge efter 90 sekunder, vinder den med mest liv. Fulde boksere slår ofte ved siden af.',
       bowl: '10 frames. Hver spiller slår en hel frame, før turen går videre. Strike og spare giver bonus som i rigtig bowling. Højeste score vinder, og på 2 mod 2 lægges holdets point sammen.'
