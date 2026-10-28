@@ -1896,7 +1896,7 @@ const HOLES = [
     sand: [Rr(255, 225, 130, 170)], slope: [{ ...Rr(255, 225, 130, 170), fx: -170, fy: 0 }], // a sandy slope up to the tunnel
     walls: [Rr(400, 110, 80, 170), Rr(400, 340, 80, 170)], rides: [tunnelRide(Rr(400, 110, 80, 400), 280, 340, 110)],
     domes: [{ x: 655, y: 310, r: 150, f: 900 }], cupPull: 200, cupSp: 240, tee: [190, 310], cup: [655, 310] },
-  { name: 'Finalen', par: 6, max: 10, b: Rr(40, 100, 880, 415), // three lanes: right along the bottom, back left through the middle, right along the top
+  { name: 'Finalen', par: 6, max: 15, b: Rr(40, 100, 880, 415), // three lanes: right along the bottom, back left through the middle, right along the top
     walls: [Rr(40, 375, 780, 20), Rr(140, 235, 780, 20)],
     sand: [Rr(280, 395, 110, 70)], water: [Rr(430, 315, 150, 60)],
     boost: [{ ...Rr(760, 255, 70, 120), dx: -1, dy: 0 }],
@@ -4164,7 +4164,7 @@ function renderMenu() {
     : ({
       pool: '1 mod 1 og 2 mod 2 spilles som 8-ball. Alle mod alle spilles om point: 1 point pr. kugle, 3 for 8\'eren, −1 for hvid i hul.',
       darts: 'Alle starter på 301 og skal ramme præcis 0. Kaster du over, er det bust, og turen tæller ikke. På 2 mod 2 deler holdet én score.',
-      golf: `${HOLES.length} baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane (10 på finalen), vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.`,
+      golf: `${HOLES.length} baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane (15 på finalen), vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.`,
       laser: 'Alle mod alle eller 2 mod 2 i 2 minutter. Bliver du ramt, er du ude i et par sekunder. Flest tags vinder, og på 2 mod 2 tæller holdets tags sammen.',
       box: 'Kun 1 mod 1. Først til K.O. vinder. Står I begge efter 90 sekunder, vinder den med mest liv. Fulde boksere slår ofte ved siden af.',
       bowl: '10 frames. Hver spiller slår en hel frame, før turen går videre. Strike og spare giver bonus som i rigtig bowling. Højeste score vinder, og på 2 mod 2 lægges holdets point sammen.'
