@@ -101,6 +101,11 @@ kbd { font-family: var(--body); background: #1b1408; color: var(--brass); border
 .card .note { font-size: 13px; color: var(--smoke); }
 .label { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--smoke); margin-top: 4px; }
 .fmt { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.holes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+.holes button { background: #2a1f18; color: var(--chalk); border: 1px solid #5a4330; padding: 7px 4px; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.holes button small { font-size: 11px; font-weight: 600; color: var(--smoke); }
+.holes button:hover { border-color: var(--brass); }
+@media (max-width: 520px) { .holes { grid-template-columns: repeat(2, 1fr); } }
 .fmt button { background: #2a1f18; color: var(--chalk); border: 1px solid #5a4330; padding: 10px 6px; font-size: 14px; }
 .fmt button:hover:not(:disabled) { border-color: var(--brass); }
 #matchList { display: flex; flex-direction: column; gap: 6px; }
@@ -203,6 +208,10 @@ kbd { font-family: var(--body); background: #1b1408; color: var(--brass); border
   <div class="card wide">
     <h2 id="menuTitle"></h2>
     <button id="solo" class="primary" type="button">Træn alene</button>
+    <div id="holePick" hidden>
+      <div class="label">Eller øv én bane</div>
+      <div id="holeGrid" class="holes"></div>
+    </div>
     <div id="cpuBox">
       <div class="label">Spar mod computeren</div>
       <div class="fmt cpus">
@@ -2203,7 +2212,8 @@ function drawGolfCard(card, cur) {
 const golf = {
   h: 0, ball: null, strokes: 0, card: [], moving: false, acc: 0, charging: false, chargeT: 0, power: 0, from: null,
   msg: '', msgT: 0, nextT: 0, done: false, fx: null,
-  reset() { Object.assign(this, { h: 0, card: [], done: false, msg: '', msgT: 0 }); this.startHole(); },
+  only: null, // a hole number when practising just that one
+  reset() { Object.assign(this, { h: this.only != null ? this.only : 0, card: [], done: false, msg: '', msgT: 0 }); this.startHole(); },
   startHole() {
     const ho = HOLES[this.h];
     this.ball = { x: ho.tee[0], y: ho.tee[1], vx: 0, vy: 0 };
@@ -2225,7 +2235,7 @@ const golf = {
     if (this.msgT > 0) this.msgT -= dt;
     if (this.intro > 0) this.intro -= dt;
     if (this.fx) { this.fx.t -= dt; if (this.fx.t <= 0) this.fx = null; }
-    if (this.nextT > 0) { this.nextT -= dt; if (this.nextT <= 0) { this.h++; if (this.h >= HOLES.length) this.finish(); else this.startHole(); } }
+    if (this.nextT > 0) { this.nextT -= dt; if (this.nextT <= 0) { if (this.only != null) { this.finishOne(); return; } this.h++; if (this.h >= HOLES.length) this.finish(); else this.startHole(); } }
     const ho = HOLES[Math.min(this.h, HOLES.length - 1)];
     if (this.moving) {
       this.acc += dt;
@@ -2239,7 +2249,14 @@ const golf = {
       if (!this.moving && this.nextT <= 0 && this.strokes >= (ho.max || GOLF_MAX)) this.holeDone(ho.max || GOLF_MAX, `Maks ${ho.max || GOLF_MAX} slag`);
     }
     const tot = this.card.reduce((s, v) => s + v, 0), parSoFar = HOLES.slice(0, this.card.length).reduce((s, x) => s + x.par, 0);
+    if (this.only != null) { const best = store.get('golfHole:' + ho.name); statusEl.textContent = `Øver bane ${this.h + 1}: ${ho.name} · Par ${ho.par} · Slag: ${this.strokes}` + (best ? ` · Rekord: ${best}` : ''); return; }
     statusEl.textContent = `Træning · Bane ${Math.min(this.h + 1, HOLES.length)}/${HOLES.length} · Slag: ${this.strokes} · I alt: ${tot} (${fmtPar(tot - parSoFar)})`;
+  },
+  finishOne() { // one hole on its own: show the score and the record for that hole
+    this.done = true;
+    const ho = HOLES[this.h], st = this.card[this.h], key = 'golfHole:' + ho.name, best = store.get(key), record = !best || st < best;
+    if (record) store.set(key, st);
+    showPanel(record ? 'Ny rekord!' : holeWord(st, ho.par), `Bane ${this.h + 1}, ${ho.name}: ${st} slag (par ${ho.par}).` + (best && !record ? ` Din rekord er ${best}.` : ''));
   },
   finish() {
     this.done = true;
@@ -4112,6 +4129,9 @@ function openMenu(game) {
   menuGame = game; promptEl.hidden = true;
   $('menuTitle').textContent = GAME_LABEL[game];
   $('solo').hidden = game === 'box' || game === 'laser';
+  $('solo').textContent = game === 'golf' ? 'Træn alene: hele runden' : 'Træn alene';
+  $('holePick').hidden = game !== 'golf';
+  if (game === 'golf') renderHoleGrid();
   renderMenu(); menuEl.hidden = false; (game === 'box' || game === 'laser' ? document.querySelector('[data-cpu="1"]') : $('solo')).focus();
 }
 // boxing has its own real-time sparring; every other game plays a 1 mod 1 match against the computer
@@ -4123,7 +4143,18 @@ document.querySelectorAll('[data-cpu]').forEach(b => b.onclick = () => {
 });
 function closeMenu() { menuEl.hidden = true; currentZone = undefined; }
 $('menuClose').onclick = closeMenu;
-$('solo').onclick = () => { closeMenu(); setMode(menuGame); };
+$('solo').onclick = () => { closeMenu(); golf.only = null; setMode(menuGame); };
+function renderHoleGrid() {
+  const grid = $('holeGrid'); grid.textContent = '';
+  HOLES.forEach((h, i) => {
+    const btn = document.createElement('button'), best = store.get('golfHole:' + h.name);
+    btn.type = 'button';
+    btn.append(document.createTextNode(`${i + 1}. ${h.name}`));
+    const sm = document.createElement('small'); sm.textContent = `Par ${h.par}` + (best ? ` · rekord ${best}` : ''); btn.append(sm);
+    btn.onclick = () => { closeMenu(); golf.only = i; setMode('golf'); };
+    grid.append(btn);
+  });
+}
 document.querySelectorAll('[data-fmt]').forEach(b => b.onclick = () => createMatch(menuGame, b.dataset.fmt));
 function renderMenu() {
   const list = $('matchList'); list.textContent = '';
