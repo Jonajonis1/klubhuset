@@ -1887,7 +1887,15 @@ const HOLES = [
     sand: [Rr(255, 225, 130, 170)], slope: [{ ...Rr(255, 225, 130, 170), fx: -170, fy: 0 }], // a sandy slope up to the tunnel
     walls: [Rr(400, 110, 80, 170), Rr(400, 340, 80, 170)], rides: [tunnelRide(Rr(400, 110, 80, 400), 280, 340, 110)],
     domes: [{ x: 655, y: 310, r: 150, f: 900 }], cupPull: 200, cupSp: 240, tee: [190, 310], cup: [655, 310] },
-  { name: 'Finalen', par: 4, b: Rr(140, 110, 680, 400), walls: [Rr(420, 110, 30, 250)], sand: [Rr(250, 110, 120, 200)], water: [Rr(520, 110, 140, 200)], boost: [{ ...Rr(680, 330, 140, 80), dx: 0, dy: -1 }], mills: [{ x: 750, y: 255, r: 55, n: 3, w: 1.5, hub: true }], tee: [190, 450], cup: [760, 170] }
+  { name: 'Finalen', par: 6, max: 10, b: Rr(40, 100, 880, 415), // three lanes: right along the bottom, back left through the middle, right along the top
+    walls: [Rr(40, 375, 780, 20), Rr(140, 235, 780, 20)],
+    sand: [Rr(280, 395, 110, 70)], water: [Rr(430, 315, 150, 60)],
+    boost: [{ ...Rr(760, 255, 70, 120), dx: -1, dy: 0 }],
+    mills: [{ x: 270, y: 315, r: 50, n: 3, w: 1.5, hub: true }],
+    movers: [{ ...Rr(560, 135, 24, 60), dx: 0, dy: 1, amp: 33, sp: 1.8 }],
+    bumpers: [[520, 470], [380, 140], [380, 200]],
+    domes: [{ x: 850, y: 168, r: 62, f: 600 }], cupPull: 200, cupSp: 240,
+    tee: [80, 455], cup: [850, 168] }
 ];
 // hills (fx/fy = which way is downhill and how steep) on every hole after "Bakken"
 const HILLS = {
@@ -1896,7 +1904,7 @@ const HILLS = {
   'Skyderen': [{ ...Rr(380, 130, 300, 120), fx: 0, fy: 100 }, { ...Rr(380, 350, 300, 120), fx: 0, fy: -100 }],
   'Øen': [{ ...Rr(280, 110, 170, 400), fx: 75, fy: 0 }],
   'Portalen': [{ ...Rr(140, 300, 320, 170), fx: 0, fy: -80 }, { ...Rr(600, 130, 220, 340), fx: 0, fy: -90 }],
-  'Finalen': [{ ...Rr(140, 110, 110, 250), fx: 0, fy: 80 }, { ...Rr(300, 380, 320, 130), fx: 90, fy: 0 }]
+  'Finalen': [{ ...Rr(600, 395, 200, 120), fx: 90, fy: 0 }, { ...Rr(150, 100, 180, 135), fx: 70, fy: 0 }]
 };
 for (const h of HOLES) if (HILLS[h.name]) h.slope = (h.slope || []).concat(HILLS[h.name]);
 const PAR_TOTAL = HOLES.reduce((s, h) => s + h.par, 0);
@@ -2228,7 +2236,7 @@ const golf = {
         else if (ev === 'water') { this.moving = false; this.fx = { k: 'water', x: this.ball.x, y: this.ball.y, t: 0.7 }; this.strokes++; this.ball = { ...this.from, vx: 0, vy: 0 }; this.flash('Plask! +1 strafslag'); }
         else if (ballStopped(this.ball)) this.moving = false;
       }
-      if (!this.moving && this.nextT <= 0 && this.strokes >= GOLF_MAX) this.holeDone(GOLF_MAX, `Maks ${GOLF_MAX} slag`);
+      if (!this.moving && this.nextT <= 0 && this.strokes >= (ho.max || GOLF_MAX)) this.holeDone(ho.max || GOLF_MAX, `Maks ${ho.max || GOLF_MAX} slag`);
     }
     const tot = this.card.reduce((s, v) => s + v, 0), parSoFar = HOLES.slice(0, this.card.length).reduce((s, x) => s + x.par, 0);
     statusEl.textContent = `Træning · Bane ${Math.min(this.h + 1, HOLES.length)}/${HOLES.length} · Slag: ${this.strokes} · I alt: ${tot} (${fmtPar(tot - parSoFar)})`;
@@ -3125,7 +3133,8 @@ function golfShot(m, a, p, ph) {
   if (res.ev === 'cup') { G.pos[s] = 0; G.card[s][G.h] = G.st[s]; msg = { s, t: G.st[s] === 1 ? 'slog hole in one!' : `gik i hul på ${G.st[s]} slag` }; }
   else if (res.ev === 'water') { G.st[s]++; msg = { s, t: 'ramte vandet. +1 strafslag' }; }
   else { G.pos[s] = [r1(res.b.x), r1(res.b.y)]; msg = { s, t: `har brugt ${G.st[s]} slag` }; }
-  if (G.pos[s] !== 0 && G.st[s] >= GOLF_MAX) { G.pos[s] = 0; G.card[s][G.h] = GOLF_MAX; msg = { s, t: `nåede maks ${GOLF_MAX} slag` }; }
+  const mx = hole.max || GOLF_MAX;
+  if (G.pos[s] !== 0 && G.st[s] >= mx) { G.pos[s] = 0; G.card[s][G.h] = mx; msg = { s, t: `nåede maks ${mx} slag` }; }
   m.seq++;
   G.last = { s, a: r1(a * 1000) / 1000, p: r1(p * 1000) / 1000, ph, from: fp, h: G.h, k: m.seq };
   const n = m.seats.length;
@@ -4124,7 +4133,7 @@ function renderMenu() {
     : ({
       pool: '1 mod 1 og 2 mod 2 spilles som 8-ball. Alle mod alle spilles om point: 1 point pr. kugle, 3 for 8\'eren, −1 for hvid i hul.',
       darts: 'Alle starter på 301 og skal ramme præcis 0. Kaster du over, er det bust, og turen tæller ikke. På 2 mod 2 deler holdet én score.',
-      golf: `${HOLES.length} baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane, vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.`,
+      golf: `${HOLES.length} baner. I slår på skift på samme bane, og færrest slag vinder. Maks 7 slag pr. bane (10 på finalen), vand giver 1 strafslag. På 2 mod 2 lægges holdets slag sammen.`,
       laser: 'Alle mod alle eller 2 mod 2 i 2 minutter. Bliver du ramt, er du ude i et par sekunder. Flest tags vinder, og på 2 mod 2 tæller holdets tags sammen.',
       box: 'Kun 1 mod 1. Først til K.O. vinder. Står I begge efter 90 sekunder, vinder den med mest liv. Fulde boksere slår ofte ved siden af.',
       bowl: '10 frames. Hver spiller slår en hel frame, før turen går videre. Strike og spare giver bonus som i rigtig bowling. Højeste score vinder, og på 2 mod 2 lægges holdets point sammen.'
